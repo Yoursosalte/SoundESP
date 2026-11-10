@@ -45,6 +45,16 @@ public class SoundESP extends Module {
         .name("radius")
         .description("0 removes the addon's distance limit (but not the server sound limit).")
         .defaultValue(0).range(0, 512).sliderRange(0, 256).build());
+    private final Setting<Boolean> ignoreSelf = sgGeneral.add(new BoolSetting.Builder()
+        .name("ignore-own-sounds")
+        .description("Ignore sounds very close to your player (also hides other nearby sounds).")
+        .defaultValue(true).build());
+
+    private final Setting<Double> selfRadius = sgGeneral.add(new DoubleSetting.Builder()
+        .name("own-sound-radius")
+        .description("Sounds within this many blocks of your player will be hidden.")
+        .defaultValue(1.75).range(0.25, 5.0).sliderRange(0.5, 4.0).build());
+
     private final Setting<Double> lifetime = sgGeneral.add(new DoubleSetting.Builder()
         .name("marker-lifetime").description("Seconds a detected sound stays marked, even after leaving render distance.")
         .defaultValue(120.0).range(0.25, 3600.0).sliderRange(1.0, 600.0).build());
@@ -73,6 +83,14 @@ public class SoundESP extends Module {
     private final SoundEventListener soundListener = (sound, soundEvent, range) -> {
         SoundType type = classify(sound);
         if (type == null || !isEnabled(type)) return;
+        if (ignoreSelf.get() && Minecraft.getInstance().player != null) {
+            var player = Minecraft.getInstance().player;
+            double dx = sound.getX() - player.getX();
+            double dy = sound.getY() - player.getY();
+            double dz = sound.getZ() - player.getZ();
+            double distance = selfRadius.get();
+            if (dx * dx + dy * dy + dz * dz <= distance * distance) return;
+        }
         markers.addLast(new SoundMarker(sound.getX(), sound.getY(), sound.getZ(), type, System.currentTimeMillis()));
         while (markers.size() > 512) markers.pollFirst();
     };
