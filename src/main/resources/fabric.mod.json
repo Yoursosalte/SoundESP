@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "id": "addon-template",
+  "id": "sound-esp",
   "version": "${version}",
-  "name": "Addon Template",
-  "description": "An addon template for Meteor Client addons.",
+  "name": "Sound ESP",
+  "description": "Highlights client-received footsteps, redstone and block-breaking sounds.",
   "authors": [
-    "seasnail"
+    "SoundESP contributors"
   ],
   "contact": {
-    "sources": "https://github.com/MeteorDevelopment/meteor-addon-template"
+    "sources": "https://github.com/Yoursosalte/SoundESP"
   },
   "icon": "assets/template/icon.png",
   "environment": "client",
@@ -17,9 +17,6 @@
       "com.example.addon.AddonTemplate"
     ]
   },
-  "mixins": [
-    "addon-template.mixins.json"
-  ],
   "custom": {
     "meteor-client:color": "225,25,25",
     "modmenu": {
