@@ -1,6 +1,7 @@
 package com.example.addon;
 
 import com.example.addon.modules.SoundESP;
+import com.example.addon.modules.BlockESP;
 import com.mojang.logging.LogUtils;
 import meteordevelopment.meteorclient.addons.GithubRepo;
 import meteordevelopment.meteorclient.addons.MeteorAddon;
@@ -18,6 +19,7 @@ public class AddonTemplate extends MeteorAddon {
     public void onInitialize() {
         LOG.info("Initializing Sound ESP addon");
         Modules.get().add(new SoundESP());
+        Modules.get().add(new BlockESP());
     }
 
     @Override
