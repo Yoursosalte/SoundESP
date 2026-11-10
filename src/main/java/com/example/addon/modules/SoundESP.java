@@ -46,8 +46,8 @@ public class SoundESP extends Module {
         .description("0 removes the addon's distance limit (but not the server sound limit).")
         .defaultValue(0).range(0, 512).sliderRange(0, 256).build());
     private final Setting<Double> lifetime = sgGeneral.add(new DoubleSetting.Builder()
-        .name("marker-lifetime").description("Seconds a marker stays visible.")
-        .defaultValue(2.5).range(0.25, 10.0).sliderRange(0.5, 6.0).build());
+        .name("marker-lifetime").description("Seconds a detected sound stays marked, even after leaving render distance.")
+        .defaultValue(120.0).range(0.25, 3600.0).sliderRange(1.0, 600.0).build());
     private final Setting<Double> markerSize = sgRender.add(new DoubleSetting.Builder()
         .name("marker-size").description("3D box size.")
         .defaultValue(0.22).range(0.05, 1.0).sliderRange(0.1, 0.5).build());
