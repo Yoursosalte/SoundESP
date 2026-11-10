@@ -39,15 +39,20 @@ public class BlockESP extends Module {
 
     private final Setting<Integer> scanRadius = sgScanning.add(new IntSetting.Builder()
         .name("scan-radius").description("Search radius in loaded chunks, measured in blocks.")
-        .defaultValue(32).range(8, 96).sliderRange(8, 64).build());
+        .defaultValue(64).range(8, 192).sliderRange(16, 128).build());
 
     private final Setting<Integer> verticalRadius = sgScanning.add(new IntSetting.Builder()
         .name("vertical-radius").description("Vertical scan distance from your player.")
-        .defaultValue(32).range(8, 128).sliderRange(8, 64).build());
+        .defaultValue(64).range(8, 192).sliderRange(8, 128).build());
+
+    private final Setting<Boolean> fullHeight = sgScanning.add(new BoolSetting.Builder()
+        .name("full-world-height")
+        .description("Scan from the bottom to the top of loaded chunks, including completely hidden blocks.")
+        .defaultValue(true).build());
 
     private final Setting<Integer> scanBudget = sgScanning.add(new IntSetting.Builder()
         .name("blocks-per-tick").description("How many block positions to examine per game tick.")
-        .defaultValue(4096).range(128, 16384).sliderRange(512, 8192).build());
+        .defaultValue(16384).range(512, 32768).sliderRange(1024, 32768).build());
 
     private final Setting<Integer> maxMarkers = sgScanning.add(new IntSetting.Builder()
         .name("max-markers").description("Maximum remembered block positions.")
@@ -90,6 +95,7 @@ public class BlockESP extends Module {
     private int cursor;
     private int scanX, scanY, scanZ;
     private int lastRadius, lastVertical;
+    private boolean lastFullHeight;
     private Set<Block> lastBlocks = new HashSet<>();
     private String lastCandidateCoords = "";
     private final Set<BlockPos> candidates = new HashSet<>();
@@ -163,37 +169,51 @@ public class BlockESP extends Module {
 
         int r = scanRadius.get();
         int v = verticalRadius.get();
+        boolean scanAllY = fullHeight.get();
+        int lowY = scanAllY ? mc.level.getMinY() : mc.player.getBlockY() - v;
+        int highY = scanAllY ? mc.level.getMaxY() - 1 : mc.player.getBlockY() + v;
+        int height = highY - lowY + 1;
+        if (height <= 0) return;
         int px = mc.player.getBlockX();
         int py = mc.player.getBlockY();
         int pz = mc.player.getBlockZ();
 
         // Restart a scan when the player moves substantially; no chunk loading is triggered.
-        if (cursor == 0 || r != lastRadius || v != lastVertical
-            || Math.abs(px - scanX) > 8 || Math.abs(py - scanY) > 8 || Math.abs(pz - scanZ) > 8) {
+        if (cursor == 0 || r != lastRadius || v != lastVertical || scanAllY != lastFullHeight
+            || Math.abs(px - scanX) > Math.max(16, r / 2)
+            || (!scanAllY && Math.abs(py - scanY) > Math.max(16, v / 2))
+            || Math.abs(pz - scanZ) > Math.max(16, r / 2)) {
             scanX = px;
             scanY = py;
             scanZ = pz;
             lastRadius = r;
             lastVertical = v;
+            lastFullHeight = scanAllY;
             cursor = 0;
         }
 
         int side = 2 * r + 1;
-        int height = 2 * v + 1;
-        int layer = side * side;
-        int total = layer * height;
+        int total = side * side * height;
         int count = 0;
 
         BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos();
         while (count++ < scanBudget.get() && cursor < total) {
             int index = cursor++;
-            int dx = index % side - r;
-            int dz = (index / side) % side - r;
-            int dy = index / layer - v;
-            if (dx * dx + dz * dz > r * r) continue;
+            int yOffset = index % height;
+            int column = index / height;
+            int dx = column % side - r;
+            int dz = column / side - r;
+            if (dx * dx + dz * dz > r * r) {
+                cursor += height - yOffset - 1;
+                continue;
+            }
 
-            mutable.set(scanX + dx, scanY + dy, scanZ + dz);
-            if (!mc.level.hasChunkAt(mutable)) continue;
+            mutable.set(scanX + dx, lowY + yOffset, scanZ + dz);
+            if (!mc.level.hasChunkAt(mutable)) {
+                // Skip the rest of this column if its chunk was never sent to the client.
+                cursor += height - yOffset - 1;
+                continue;
+            }
             BlockPos pos = mutable.immutable();
             Block actual = mc.level.getBlockState(mutable).getBlock();
             if (wanted.contains(actual)) {
