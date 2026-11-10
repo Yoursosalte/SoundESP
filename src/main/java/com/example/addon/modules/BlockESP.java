@@ -9,20 +9,18 @@ import meteordevelopment.meteorclient.settings.ColorSetting;
 import meteordevelopment.meteorclient.settings.IntSetting;
 import meteordevelopment.meteorclient.settings.Setting;
 import meteordevelopment.meteorclient.settings.SettingGroup;
-import meteordevelopment.meteorclient.settings.StringSetting;
+import meteordevelopment.meteorclient.settings.BlockListSetting;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.utils.render.color.SettingColor;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 
-import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /** Highlights selected block types in already received chunks. Never loads or discovers unseen chunks. */
@@ -30,10 +28,11 @@ public class BlockESP extends Module {
     private final SettingGroup sgGeneral = settings.getDefaultGroup();
     private final SettingGroup sgRender = settings.createGroup("Render");
 
-    private final Setting<String> blockIds = sgGeneral.add(new StringSetting.Builder()
+    private final Setting<java.util.List<Block>> blockIds = sgGeneral.add(new BlockListSetting.Builder()
         .name("blocks")
-        .description("Comma-separated block IDs; for example minecraft:diamond_ore,minecraft:chest,minecraft:spawner")
-        .defaultValue("minecraft:chest,minecraft:barrel,minecraft:spawner").build());
+        .description("Select the exact block types to highlight.")
+        .defaultValue(Blocks.CHEST, Blocks.BARREL, Blocks.SPAWNER)
+        .build());
 
     private final Setting<Integer> scanRadius = sgGeneral.add(new IntSetting.Builder()
         .name("scan-radius").description("Search radius in loaded chunks, measured in blocks.")
@@ -62,13 +61,13 @@ public class BlockESP extends Module {
         .name("tracers").description("Draw lines to remembered blocks, even outside your view distance.")
         .defaultValue(false).build());
 
-    private final LinkedHashMap<BlockPos, String> found = new LinkedHashMap<>();
-    private final Set<String> wanted = new HashSet<>();
+    private final LinkedHashMap<BlockPos, Block> found = new LinkedHashMap<>();
+    private final Set<Block> wanted = new HashSet<>();
 
     private int cursor;
     private int scanX, scanY, scanZ;
     private int lastRadius, lastVertical;
-    private String lastBlocks = "";
+    private Set<Block> lastBlocks = new HashSet<>();
     private Object lastLevel;
 
     public BlockESP() {
@@ -89,19 +88,15 @@ public class BlockESP extends Module {
         found.clear();
         cursor = 0;
         lastLevel = null;
-        lastBlocks = "";
+        lastBlocks.clear();
     }
 
     private void updateTargets() {
-        String value = blockIds.get();
-        if (value.equals(lastBlocks)) return;
-        lastBlocks = value;
+        Set<Block> next = new HashSet<>(blockIds.get());
+        if (next.equals(lastBlocks)) return;
+        lastBlocks = next;
         wanted.clear();
-        for (String entry : value.split(",")) {
-            String id = entry.trim().toLowerCase();
-            if (id.isEmpty()) continue;
-            wanted.add(id.contains(":") ? id : "minecraft:" + id);
-        }
+        wanted.addAll(next);
         found.clear();
         cursor = 0;
     }
@@ -150,7 +145,7 @@ public class BlockESP extends Module {
             mutable.set(scanX + dx, scanY + dy, scanZ + dz);
             if (!mc.level.hasChunkAt(mutable)) continue;
             BlockPos pos = mutable.immutable();
-            String actual = BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(mutable).getBlock()).toString();
+            Block actual = mc.level.getBlockState(mutable).getBlock();
             if (wanted.contains(actual)) {
                 if (!found.containsKey(pos)) found.put(pos, actual);
                 while (found.size() > maxMarkers.get()) {
