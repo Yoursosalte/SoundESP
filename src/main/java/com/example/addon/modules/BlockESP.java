@@ -1,0 +1,189 @@
+package com.example.addon.modules;
+
+import com.example.addon.AddonTemplate;
+import meteordevelopment.meteorclient.events.render.Render3DEvent;
+import meteordevelopment.meteorclient.events.world.TickEvent;
+import meteordevelopment.meteorclient.renderer.ShapeMode;
+import meteordevelopment.meteorclient.settings.BoolSetting;
+import meteordevelopment.meteorclient.settings.ColorSetting;
+import meteordevelopment.meteorclient.settings.IntSetting;
+import meteordevelopment.meteorclient.settings.Setting;
+import meteordevelopment.meteorclient.settings.SettingGroup;
+import meteordevelopment.meteorclient.settings.StringSetting;
+import meteordevelopment.meteorclient.systems.modules.Module;
+import meteordevelopment.meteorclient.utils.render.color.SettingColor;
+import meteordevelopment.orbit.EventHandler;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.phys.AABB;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/** Highlights selected block types in already received chunks. Never loads or discovers unseen chunks. */
+public class BlockESP extends Module {
+    private final SettingGroup sgGeneral = settings.getDefaultGroup();
+    private final SettingGroup sgRender = settings.createGroup("Render");
+
+    private final Setting<String> blockIds = sgGeneral.add(new StringSetting.Builder()
+        .name("blocks")
+        .description("Comma-separated block IDs; for example minecraft:diamond_ore,minecraft:chest,minecraft:spawner")
+        .defaultValue("minecraft:chest,minecraft:barrel,minecraft:spawner").build());
+
+    private final Setting<Integer> scanRadius = sgGeneral.add(new IntSetting.Builder()
+        .name("scan-radius").description("Search radius in loaded chunks, measured in blocks.")
+        .defaultValue(32).range(8, 96).sliderRange(8, 64).build());
+
+    private final Setting<Integer> verticalRadius = sgGeneral.add(new IntSetting.Builder()
+        .name("vertical-radius").description("Vertical scan distance from your player.")
+        .defaultValue(32).range(8, 128).sliderRange(8, 64).build());
+
+    private final Setting<Integer> scanBudget = sgGeneral.add(new IntSetting.Builder()
+        .name("blocks-per-tick").description("How many block positions to examine per game tick.")
+        .defaultValue(4096).range(128, 16384).sliderRange(512, 8192).build());
+
+    private final Setting<Integer> maxMarkers = sgGeneral.add(new IntSetting.Builder()
+        .name("max-markers").description("Maximum remembered block positions.")
+        .defaultValue(2048).range(128, 8192).sliderRange(128, 4096).build());
+
+    private final Setting<Boolean> remember = sgGeneral.add(new BoolSetting.Builder()
+        .name("remember-unloaded").description("Keep already observed block markers after their chunks unload.")
+        .defaultValue(true).build());
+
+    private final Setting<SettingColor> highlightColor = sgRender.add(new ColorSetting.Builder()
+        .name("highlight-color").defaultValue(new SettingColor(180, 50, 255, 210)).build());
+
+    private final Setting<Boolean> tracer = sgRender.add(new BoolSetting.Builder()
+        .name("tracers").description("Draw lines to remembered blocks, even outside your view distance.")
+        .defaultValue(false).build());
+
+    private final LinkedHashMap<BlockPos, String> found = new LinkedHashMap<>();
+    private final Set<String> wanted = new HashSet<>();
+
+    private int cursor;
+    private int scanX, scanY, scanZ;
+    private int lastRadius, lastVertical;
+    private String lastBlocks = "";
+    private Object lastLevel;
+
+    public BlockESP() {
+        super(AddonTemplate.CATEGORY, "block-esp", "Highlight chosen blocks in loaded chunks; optionally remember them after unloading.");
+    }
+
+    @Override
+    public void onActivate() {
+        reset();
+    }
+
+    @Override
+    public void onDeactivate() {
+        reset();
+    }
+
+    private void reset() {
+        found.clear();
+        cursor = 0;
+        lastLevel = null;
+        lastBlocks = "";
+    }
+
+    private void updateTargets() {
+        String value = blockIds.get();
+        if (value.equals(lastBlocks)) return;
+        lastBlocks = value;
+        wanted.clear();
+        for (String entry : value.split(",")) {
+            String id = entry.trim().toLowerCase();
+            if (id.isEmpty()) continue;
+            wanted.add(id.contains(":") ? id : "minecraft:" + id);
+        }
+        found.clear();
+        cursor = 0;
+    }
+
+    @EventHandler
+    private void onTick(TickEvent.Post event) {
+        if (mc.level == null || mc.player == null) return;
+        if (mc.level != lastLevel) {
+            reset();
+            lastLevel = mc.level;
+        }
+        updateTargets();
+        if (wanted.isEmpty()) return;
+
+        int r = scanRadius.get();
+        int v = verticalRadius.get();
+        int px = mc.player.getBlockX();
+        int py = mc.player.getBlockY();
+        int pz = mc.player.getBlockZ();
+
+        // Restart a scan when the player moves substantially; no chunk loading is triggered.
+        if (cursor == 0 || r != lastRadius || v != lastVertical
+            || Math.abs(px - scanX) > 8 || Math.abs(py - scanY) > 8 || Math.abs(pz - scanZ) > 8) {
+            scanX = px;
+            scanY = py;
+            scanZ = pz;
+            lastRadius = r;
+            lastVertical = v;
+            cursor = 0;
+        }
+
+        int side = 2 * r + 1;
+        int height = 2 * v + 1;
+        int layer = side * side;
+        int total = layer * height;
+        int count = 0;
+
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos();
+        while (count++ < scanBudget.get() && cursor < total) {
+            int index = cursor++;
+            int dx = index % side - r;
+            int dz = (index / side) % side - r;
+            int dy = index / layer - v;
+            if (dx * dx + dz * dz > r * r) continue;
+
+            mutable.set(scanX + dx, scanY + dy, scanZ + dz);
+            if (!mc.level.hasChunkAt(mutable)) continue;
+            BlockPos pos = mutable.immutable();
+            String actual = BuiltInRegistries.BLOCK.getKey(mc.level.getBlockState(mutable).getBlock()).toString();
+            if (wanted.contains(actual)) {
+                if (!found.containsKey(pos)) found.put(pos, actual);
+                while (found.size() > maxMarkers.get()) {
+                    Iterator<BlockPos> it = found.keySet().iterator();
+                    if (!it.hasNext()) break;
+                    it.next();
+                    it.remove();
+                }
+            } else {
+                found.remove(pos);
+            }
+        }
+        if (cursor >= total) {
+            cursor = 0;
+            if (!remember.get()) {
+                Iterator<BlockPos> it = found.keySet().iterator();
+                while (it.hasNext()) {
+                    BlockPos pos = it.next();
+                    if (!mc.level.hasChunkAt(pos)) it.remove();
+                }
+            }
+        }
+    }
+
+    @EventHandler
+    private void onRender(Render3DEvent event) {
+        if (mc.level == null || mc.player == null) return;
+        for (BlockPos pos : found.keySet()) {
+            event.renderer.box(new AABB(pos), highlightColor.get(), highlightColor.get(), ShapeMode.Both, 0);
+            if (tracer.get()) {
+                event.renderer.line(mc.player.getX(), mc.player.getEyeY(), mc.player.getZ(),
+                    pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, highlightColor.get());
+            }
+        }
+    }
+}
